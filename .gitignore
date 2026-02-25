@@ -1,6 +1,11 @@
 # Prerequisites
 *.d
 
+# Ficheros comprimidos
+*.zip
+*.tar.gz
+*.tar.bz2
+
 # Object files
 *.o
 *.ko

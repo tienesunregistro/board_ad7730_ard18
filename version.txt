@@ -1,0 +1,41 @@
+09-06-2015
+----------
+Versi�n 1.0
+
+El firware da soporte a la lectura de encoder y analogicas de 18 bits, +/-100 000 divisiones.
+
+26-05-2015
+-----------
+Versi�n 1.02
+Se a�ade la cabera de direcci�n de estacion
+
+Se activa el reconocimiento de celula
+
+15-09-2015
+
+----------
+
+
+Se a�ade soporte para poder configurar las lecturas en unidades de ingenier�a
+Se crea un config para config. la placa
+--------------------
+Versi�n 2.1
+
+26-05-2016
+
+----------
+
+
+Se a�ade soporte para el cambio de signo en la lectura de la c�lula
+
+//========================================================================
+
+Versión 3.0
+11-05-2020
+-----------
+
+Kernel basado en  1.03 y 2.1, se hace una revisión general del código, optimizando
+el interface SPI con los dispositivos. Se añade un parametro de datarate para cada célula
+y se cambia la opertiva del las funciones de RS232, optimizando la búsqueda
+de parámetros. Es un kernel genérico.
+
