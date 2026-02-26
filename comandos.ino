@@ -95,8 +95,66 @@ int get_params(char *cadena, char params[][LONG_MAX_PARAMETRO], int nr_max_param
     return i;
 }
 
+int procesarComando(char *cmdStr) {
+    // cmdStr ya llega como "RP|9" o "R1" (sin el :ID|)
+    int n_params = 0;
+    memset(comando.params, 0, sizeof(comando.params));
+
+    char *sep = strchr(cmdStr, '|');
+    char cmd_name[5]; // Para RI, RP, R1...
+
+    if (sep != NULL) {
+        // Hay parámetros (ej: RP|9)
+        int cmdLen = sep - cmdStr;
+        strncpy(cmd_name, cmdStr, (cmdLen > 4) ? 4 : cmdLen);
+        cmd_name[(cmdLen > 4) ? 4 : cmdLen] = '\0';
+        
+        // El resto son parámetros
+        n_params = get_params(sep + 1, comando.params, NR_MAX_PARAMETROS);
+    } else {
+        // No hay parámetros (ej: R1)
+        strncpy(cmd_name, cmdStr, 4);
+        cmd_name[4] = '\0';
+        n_params = 0;
+    }
+
+    if (strlen(cmd_name) < 2) return do_cmd_error("E|CMD_SHORT");
+
+    char prefijo = cmd_name[0];
+    char accion = cmd_name[1];
+
+    if (prefijo == 'R') {
+        switch (accion) {
+            case '1': return do_cmd_r1();
+            case '2': return do_cmd_r2();
+            case '3': return do_cmd_r3();
+            case '4': return do_cmd_r4();
+            case 'A': return do_cmd_ra();
+            case 'B': return do_cmd_rb();
+            case 'C': return do_cmd_rc();
+            case 'P': return do_cmd_rp(n_params, comando.params);
+            case 'S': return do_cmd_rs();
+            case 'X': return do_cmd_rx();
+            case 'I': return do_cmd_ri();
+            default:  return do_cmd_error("E|CMD_UNKNOWN");
+        }
+    } else if (prefijo == 'W') {
+        switch (accion) {
+            case 'P': return do_cmd_wp(n_params, comando.params);
+            case 'E': return do_cmd_we();
+            case 'I': return do_cmd_wi(n_params, comando.params);
+            case 'Y': return do_cmd_wy();
+            case 'Z': return do_cmd_wz();
+            case 'T': return do_cmd_wt();
+            default:  return do_cmd_error("E|CMD_UNKNOWN");
+        }
+    }
+    return do_cmd_error("E|CMD_UNKNOWN");
+}
+
+
 // Procesa el comando principal, parsea y delega a las funciones do_
-int procesarComando(char *cmdStr)
+int procesarComando_v0(char *cmdStr)
 {
     static char cmd_copy[LONG_COMANDO + 1];
     int n_params = 0;

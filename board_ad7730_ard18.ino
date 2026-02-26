@@ -298,10 +298,13 @@ void setup()
     attachInterrupt(digitalPinToInterrupt(PIN_RDY_AD730), ISR_RDY_ADC7730, FALLING);
 #endif
 
+    
+
     AD730_CONFIGURADO = true;
 
     interrupts();
 
+    
     vg.salida_datos_continua_start = 0;
     vg.modo_salida_datos_binario = 0;
     // vgEEprom.filtro_on_off = 1;
@@ -310,7 +313,7 @@ void setup()
 }
 
 // Bucle principal
-void loop()
+void loop0()
 {
     // Recepción RS232 por sondeo directo (más robusto en este escenario)
     check_rs232_polling();
@@ -331,6 +334,32 @@ void loop()
     }
 
     // Gestionar transmisión continua si está activa
+    if (vg.salida_datos_continua_start)
+    {
+        do_cmd_r4();
+    }
+}
+
+void loop()
+{
+    // Lectura NO bloqueante
+    check_rs232_non_blocking();
+
+    // Consumir muestras del ADC
+    if (IsDataAvailable())
+    {
+        leer_adlc();
+    }
+
+    // Alarmas (sin cambios)
+    static unsigned long last_check = 0;
+    if (millis() - last_check > TIMEOUT_CHECK_ALARMAS)
+    {
+        check_alarmas();
+        last_check = millis();
+    }
+
+    // Transmisión continua
     if (vg.salida_datos_continua_start)
     {
         do_cmd_r4();
@@ -373,4 +402,72 @@ void check_rs232_polling()
     }
 
     procesarComando(&comando_local[i]);
+}
+
+
+// Variables globales nuevas para el manejo del puerto
+char inputBuffer[LONG_COMANDO];
+int bufferIndex = 0;
+
+void check_rs232_non_blocking() {
+    while (Serial.available() > 0) {
+        char inChar = (char)Serial.read();
+
+        if (inChar == CHAR_INICIO_CMD) {
+            bufferIndex = 0;
+            continue;
+        }
+
+        if (inChar == CHAR_FIN_CMD || inChar == LF) {
+            if (bufferIndex > 0) {
+                inputBuffer[bufferIndex] = '\0';
+
+                char *separator = strchr(inputBuffer, '|');
+                if (separator != NULL) {
+                    *separator = '\0'; // Cortamos la cadena: antes es ID, después es CMD
+                    int idRecibido = atoi(inputBuffer);
+                    char *ptrCmd = separator + 1;
+
+                    // FILTRO DE IDENTIDAD
+                    if (idRecibido == vgEEprom.idEstacion || idRecibido == 0) {
+                        procesarComando(ptrCmd); 
+                    }
+                }
+            }
+            bufferIndex = 0;
+        } else if (bufferIndex < (LONG_COMANDO - 1)) {
+            if (inChar >= 32) inputBuffer[bufferIndex++] = inChar;
+        }
+    }
+}
+
+// ID máquina un caracter
+void check_rs232_non_blocking_v0() {
+    while (Serial.available() > 0) {
+        char inChar = (char)Serial.read();
+
+        // Ignorar caracteres de control innecesarios al inicio
+        if (bufferIndex == 0 && (inChar == LF || inChar == ' ')) continue;
+
+        // Si encontramos el carácter de fin (CR)
+        if (inChar == CHAR_FIN_CMD) {
+            inputBuffer[bufferIndex] = '\0'; // Cerrar cadena
+            if (bufferIndex > 0) {
+                procesarComando(inputBuffer);
+            }
+            bufferIndex = 0; // Reset para el siguiente comando
+        } 
+        else {
+            // Añadir al buffer si hay espacio
+            if (bufferIndex < LONG_COMANDO - 1) {
+                // Solo añadir si no es un LF (para limpiar el par CR/LF)
+                if (inChar != LF) {
+                    inputBuffer[bufferIndex++] = inChar;
+                }
+            } else {
+                // Buffer lleno: reset por seguridad
+                bufferIndex = 0;
+            }
+        }
+    }
 }

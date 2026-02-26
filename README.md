@@ -8,7 +8,7 @@ Firmware industrial basado en Arduino para el control de celdas de carga y medic
 
 ## 🚀 Características Técnicas
 
-- **Adquisición de Fuerza:** Conversor **AD7730** de 24 bits. Lecturas gestionadas por interrupción de hardware para máxima estabilidad.
+- **Adquisición de Fuerza:** Conversor **AD7730** de 18 bits. Lecturas gestionadas por interrupción de hardware para máxima estabilidad.
 - **Medición de Extensión:** Chip **LS7366R** para lectura de encoders en cuadratura (X1, X2, X4) con registros de 32 bits.
 - **Procesamiento de Datos:**
     - Buffer circular de datos optimizado para evitar pérdida de muestras.
