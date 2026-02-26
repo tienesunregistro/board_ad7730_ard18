@@ -11,8 +11,8 @@
 #define AD7730_18BIT_RANGE (1L << 18)  // Rango de 18 bits con signo
 #define AD7730_CMD_READ_FILTER 0x13
 #define AD7730_CMD_READ_DAC 0x14
-#define AD7730_CMD_SELECT_SINGLE_READ_DAC 0x11
-#define AD7730_GLITCH_THRESHOLD 8000   // Umbral para detectar picos
+#define AD7730_CMD_SELECT_SINGLE_READ_DATA 0x11
+#define AD7730_GLITCH_THRESHOLD 8000 // Umbral para detectar picos
 
 // Variables globales
 volatile long old_ad7730_dataconvert = 0;
@@ -27,7 +27,8 @@ static void ad7730_spiTransfer(const uint8_t *data, uint8_t len, bool readback)
   noInterrupts();
   SPI.beginTransaction(spi_ad7730);
   CS_AD7730_LOW();
-  for (uint8_t i = 0; i < len; i++) {
+  for (uint8_t i = 0; i < len; i++)
+  {
     SPI.transfer(readback ? 0 : data[i]);
   }
   CS_AD7730_HIGH();
@@ -57,7 +58,8 @@ static void ad7730_send3Bytes(uint8_t first, uint8_t second, uint8_t third)
 static bool waitForReady()
 {
   int32_t timeout = AD7730_TIMEOUT;
-  while (AD7730_RDY() == 1 && timeout--) {
+  while (AD7730_RDY() == 1 && timeout--)
+  {
     // Espera activa
   }
   return (timeout > 0);
@@ -159,7 +161,7 @@ uint8_t AD730_ReadDACReg(void)
 
 long AD730_ReadFilterReg(void)
 {
-  
+
   ad7730_sendByte(AD7730_CMD_READ_FILTER);
   noInterrupts();
   SPI.beginTransaction(spi_ad7730);
@@ -170,7 +172,7 @@ long AD730_ReadFilterReg(void)
   CS_AD7730_HIGH();
   SPI.endTransaction();
   interrupts();
-  
+
   long result = result3 + (result2 << 8) + (result1 << 16);
   return result;
 }
@@ -180,12 +182,18 @@ long AD730_ReadFilterReg(void)
 int32_t AD730_ReadConversionDataContinua(void)
 {
   // Esperamos si el ADC no esta configurado
-  if (!AD730_CONFIGURADO) {
-    if (!waitForReady()) {
+  if (!AD730_CONFIGURADO)
+  {
+    if (!waitForReady())
+    {
       // Timeout: retornar ultimo valor conocido
       return old_ad7730_dataconvert;
     }
   }
+
+  // Seleccionar lectura simple del registro de datos (DATA REGISTER)
+  // 0x11 = CR_SINGLE_READ | CR_DATA_REGISTER
+  ad7730_sendByte(AD7730_CMD_SELECT_SINGLE_READ_DATA);
 
   // Lectura de 3 bytes de datos (24 bits brutos)
   noInterrupts();
@@ -197,29 +205,17 @@ int32_t AD730_ReadConversionDataContinua(void)
   CS_AD7730_HIGH();
   SPI.endTransaction();
   interrupts();
-  // Seleccionar modo single read DAC
-  ad7730_sendByte(AD7730_CMD_SELECT_SINGLE_READ_DAC);
 
- // 1. Reconstrucción correcta en 32 bits (sin desbordamiento)
-  // Usamos OR (|) en lugar de SUMA (+) para evitar problemas de signo intermedio
-  uint32_t rawData = ((uint32_t)result1 << 16) | ((uint32_t)result2 << 8) | (uint32_t)result3;
+  // Combinar 3 bytes en valor de 24 bits y reducir a 18 bits
+  int32_t lDat = (int32_t)result3 + ((int32_t)result2 << 8) + ((int32_t)result1 << 16);
+  lDat = lDat >> AD7730_SHIFT_BITS;
 
-  // 2. Convertir de Offset Binary a Two's Complement (Solo si el ADC está en modo Bipolar)
-  // Esto hace que 0x800000 (0V) pase a ser 0x000000
-  rawData ^= 0x800000;
-
-  // 3. Ahora manejamos el signo para extenderlo a 32 bits (Sign Extension)
-  int32_t lDat;
-  if (rawData & 0x800000) {
-    lDat = (int32_t)(rawData | 0xFF000000); // Es negativo, rellenamos con FFs
-  } else {
-    lDat = (int32_t)rawData; // Es positivo
+  // Convertir a 18 bits con signo (two's complement)
+  if (lDat & AD7730_18BIT_MASK)
+  {
+    lDat -= AD7730_18BIT_RANGE;
   }
 
-  // 4. Aplicar el shift si deseas reducir resolución/ruido
-  // Si desplazas un número negativo a la derecha, el compilador C++ 
-  // mantiene el signo (Arithmetic Shift), lo cual es correcto.
-  lDat = lDat >> AD7730_SHIFT_BITS;
   return lDat;
 }
 
@@ -229,21 +225,27 @@ long AD7730_leer_adlc()
 {
   long dataconvert = AD730_ReadConversionDataContinua();
   static int rejectionCounter = 0;
-  
+
   // Calcular diferencia con ultima lectura valida
   long difference = abs(dataconvert) - abs(old_ad7730_dataconvert);
   difference = abs(difference);
 
   // Detectar y rechazar picos (glitches > threshold)
-  if (difference > AD7730_GLITCH_THRESHOLD) {
+  if (difference > AD7730_GLITCH_THRESHOLD)
+  {
     rejectionCounter++;
-    if (rejectionCounter > 5) {
+    if (rejectionCounter > 5)
+    {
       rejectionCounter = 0;
       old_ad7730_dataconvert = dataconvert; // Aceptar tras 5+ rechazos consecutivos
-    } else {
+    }
+    else
+    {
       dataconvert = old_ad7730_dataconvert; // Rechazar, usar ultima valida
     }
-  } else {
+  }
+  else
+  {
     rejectionCounter = 0;
     old_ad7730_dataconvert = dataconvert;
   }
@@ -259,8 +261,10 @@ void ISR_RDY_ADC7730()
   static unsigned long secuencia = 0;
 
   digitalWrite(PIN_TEST_DEBUG, HIGH); // Marcador de inicio ISR
-  
-  if (!AD730_CONFIGURADO) {
+
+  if (!AD730_CONFIGURADO)
+  {
+    digitalWrite(PIN_TEST_DEBUG, LOW);
     return; // ADC no configurado, ignorar
   }
 
@@ -268,7 +272,7 @@ void ISR_RDY_ADC7730()
   datoCanalCelula.dato = AD7730_leer_adlc();
   datoCanalCelula.t_ms = millis();
   datoCanalCelula.secuencia = secuencia++;
-  
+
   // Almacenar en buffer circular
   store_char(&datoCanalCelula, pdatos_buffer);
 

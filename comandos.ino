@@ -31,9 +31,7 @@
 #define CMD_WY CMD_WRITE + 6
 #define CMD_WZ CMD_WRITE + 20
 
-
-
-//Union para convertir el float a bytes
+// Union para convertir el float a bytes
 union conversor
 {
     float valorf;
@@ -42,308 +40,176 @@ union conversor
 
 //*********************************************************
 
+// Prototipos de funciones para los comandos
+int do_cmd_ri();
+int do_cmd_r1();
+int do_cmd_r2();
+int do_cmd_r3();
+int do_cmd_r4();
+int do_cmd_ra();
+int do_cmd_rb();
+int do_cmd_rc();
+int do_cmd_rs();
+int do_cmd_rx();
+int do_cmd_rp(int n_params, char params[][LONG_MAX_PARAMETRO]);
+int do_cmd_we();
+int do_cmd_wt();
+int do_cmd_wi(int n_params, char params[][LONG_MAX_PARAMETRO]);
+int do_cmd_wy();
+int do_cmd_wz();
+int do_cmd_wp(int n_params, char params[][LONG_MAX_PARAMETRO]);
+int do_cmd_error(const char *error_msg);
+int freeRam();
+
 /*
   Se le pasa "cadena" que contiene campos separados por "|"
- y rellena "params" con los campos, devuelve el numero de campos
- encontrados en "cadena"
- cada parametro tine LONG_MAX_PARAMETRO carateres máximo
- */
-
- int get_params(char *cadena, char params[][LONG_MAX_PARAMETRO], int nr_max_parametros)
+  y rellena "params" con los campos. Devuelve el numero de campos
+  encontrados. Es una versión segura que usa strtok_r y previene overflows.
+*/
+int get_params(char *cadena, char params[][LONG_MAX_PARAMETRO], int nr_max_parametros)
 {
-    char *token;
     char *p;
+    char *token;
     int i = 0;
-    char stringBuffer[LONG_COMANDO + 1];
 
-    // 1. Copia segura al buffer temporal
-    strncpy(stringBuffer, cadena, LONG_COMANDO);
-    stringBuffer[LONG_COMANDO] = '\0'; // Garantizar cierre nulo si la cadena era muy larga
+    // strtok_r es seguro para interrupciones y no modifica el puntero original
+    token = strtok_r(cadena, "|", &p);
 
-    // 2. Troceado con strtok_r
-    token = strtok_r(stringBuffer, "|", &p);
-    
     while (token != NULL)
     {
-        if (i < nr_max_parametros) // 3. Protección de índice de parámetros
+        if (i < nr_max_parametros)
         {
-            // 4. COPIA SEGURA DEL PARÁMETRO (strncpy)
-            // Copiamos como máximo LONG_MAX_PARAMETRO - 1 (para dejar sitio al '\0')
-            strncpy(params[i], token, LONG_MAX_PARAMETRO - 1);
-            
-            // 5. Garantizar el cierre del nulo manualmente
-            params[i][LONG_MAX_PARAMETRO - 1] = '\0'; 
-
-            i++;
-        }
-        else 
-        {
-            // Opcional: Si hay más parámetros de los permitidos, salimos
-            break; 
-        }
-        
-        token = strtok_r(NULL, "|", &p);
-    }
-
-    return i; // Devolvemos cuántos parámetros pudimos procesar con seguridad
-}
-
-int get_params_org(char *cadena, char params[][LONG_MAX_PARAMETRO], int nr_max_parametros)
-{
-    char *token;
-    char *p;
-    int i = 0;
-    char stringBuffer[LONG_COMANDO + 1];
-
-    strncpy(stringBuffer, cadena, LONG_COMANDO);
-    stringBuffer[LONG_COMANDO] = '\0'; // Garantizar cierre nulo si la cadena era muy larga
-
-    //Serial.println(stringBuffer);
-
-    token = strtok_r(stringBuffer, "|", &p);
-    do
-    {
-        if (token)
-        {
+            // Copia segura para evitar desbordamiento del parámetro
             strncpy(params[i], token, LONG_MAX_PARAMETRO - 1);
             params[i][LONG_MAX_PARAMETRO - 1] = '\0'; // Asegurar terminación nula
-
-            //sprintf(str1, "%d = %s", i, params[i]);
-            //Serial.println(str1);
-
             i++;
-            if (i > nr_max_parametros - 1)
-            {
-                return -1;
-            }
         }
-    } while ((token = strtok_r(NULL, "|", &p)) != NULL);
+        else
+        {
+            // Se encontraron más parámetros de los que el buffer puede alojar
+            break;
+        }
+        token = strtok_r(NULL, "|", &p);
+    }
 
     return i;
 }
 
-//Pasa el comando a un enumerador
-int decodificarComando(char *comando)
+// Procesa el comando principal, parsea y delega a las funciones do_
+int procesarComando(char *cmdStr)
 {
-    if (!strcmp(comando, "R1"))
+    static char cmd_copy[LONG_COMANDO + 1];
+    int n_params = 0;
+
+    // Limpiar buffer global de parámetros para no arrastrar datos previos
+    memset(comando.params, 0, sizeof(comando.params));
+
+    // 1. Extraer el comando principal (ej: ":1|RP|9" -> "RP")
+    // Usamos copia estática para no cargar la pila
+    strncpy(cmd_copy, cmdStr, LONG_COMANDO);
+    cmd_copy[LONG_COMANDO] = '\0';
+
+    // Parseo determinista formato :ID|CMD|P1|P2...
+    char *start = cmd_copy;
+    if (*start == ':')
     {
-        return CMD_R1;
+        start++;
     }
 
-    if (!strcmp(comando, "R2"))
+    if (*start == '\0')
+        return 0;
+
+    // Separador tras ID
+    char *sep1 = strchr(start, '|');
+    if (sep1 == NULL)
+        return do_cmd_error("E|CMD_MISSING");
+
+    *sep1 = '\0'; // ID aislado (no usado aquí)
+
+    // Comando (R1, RI, RP, WP, ...)
+    char *cmd_name = sep1 + 1;
+    if (*cmd_name == '\0')
+        return do_cmd_error("E|CMD_MISSING");
+
+    // Separador tras CMD (si existe, hay parámetros)
+    char *sep2 = strchr(cmd_name, '|');
+    if (sep2 != NULL)
     {
-        return CMD_R2;
-    }
-
-    if (!strcmp(comando, "RP"))
-    {
-        return CMD_RP;
-    }
-
-    if (!strcmp(comando, "WP"))
-    {
-        return CMD_WP;
-    }
-
-    if (!strcmp(comando, "R3"))
-    {
-        return CMD_R3;
-    }
-
-    if (!strcmp(comando, "R4"))
-    {
-        return CMD_R4;
-    }
-
-    if (!strcmp(comando, "R5"))
-    {
-        return CMD_R5;
-    }
-
-    if (!strcmp(comando, "RA"))
-    {
-        return CMD_RA;
-    }
-
-    if (!strcmp(comando, "RB"))
-    {
-        return CMD_RB;
-    }
-
-    if (!strcmp(comando, "RC"))
-    {
-        return CMD_RC;
-    }
-
-    if (!strcmp(comando, "RS"))
-    {
-        return CMD_RS;
-    }
-
-    if (!strcmp(comando, "RX"))
-    {
-        return CMD_RX;
-    }
-
-    if (!strcmp(comando, "RI"))
-    {
-        return CMD_RI;
-    }
-
-    if (!strcmp(comando, "WE"))
-    {
-        return CMD_WE;
-    }
-
-    if (!strcmp(comando, "WT"))
-    {
-        return CMD_WT;
-    }
-
-    if (!strcmp(comando, "WI"))
-    {
-        return CMD_WI;
-    }
-
-    if (!strcmp(comando, "WY"))
-    {
-        return CMD_WY;
-    }
-
-    if (!strcmp(comando, "WZ"))
-    {
-        return CMD_WZ;
-    }
-
-    return CMD_RERROR;
-}
-
-//Aqui llega el comando sin el Id de estacion y sin los parametros
-
-int procesarComando(char *cmdStr) {
-    if (strlen(cmdStr) < 2) return do_cmd_error();
-
-    char prefijo = cmdStr[0];
-    char accion = cmdStr[1];
-
-    // Agrupamos por lectura (R) o escritura (W)
-    if (prefijo == 'R') {
-        switch (accion) {
-            case '1': return do_cmd_r1();
-            case '2': return do_cmd_r2();
-            case '3': return do_cmd_r3();
-            case '4': return do_cmd_r4();
-            case 'A': return do_cmd_ra();
-            case 'B': return do_cmd_rb();
-            case 'C': return do_cmd_rc();
-            case 'P': return do_cmd_rp();
-            case 'S': return do_cmd_rs();
-            case 'X': return do_cmd_rx();
-            case 'I': return do_cmd_ri();
-            default:  return do_cmd_error();
+        *sep2 = '\0';
+        char *params_start = sep2 + 1;
+        if (*params_start != '\0')
+        {
+            n_params = get_params(params_start, comando.params, NR_MAX_PARAMETROS);
         }
-    } 
-    else if (prefijo == 'W') {
-        switch (accion) {
-            case 'P': return do_cmd_wp();
-            case 'E': return do_cmd_we();
-            case 'I': return do_cmd_wi();
-            case 'Y': return do_cmd_wy();
-            case 'Z': return do_cmd_wz();
-            case 'T': return do_cmd_wt();
-            default:  return do_cmd_error();
+        else
+        {
+            n_params = 0;
         }
     }
-    
-    return do_cmd_error();
-}
-
-int procesarComando_org(char *comandox)
-{
-    int cmd;
-    int ok = 0;
-
-    cmd = decodificarComando(comandox);
-
-    switch (cmd)
+    else
     {
-
-    case CMD_R1:
-        ok = do_cmd_r1();
-        break;
-    case CMD_R2:
-        ok = do_cmd_r2();
-        break;
-
-    case CMD_RP:
-        ok = do_cmd_rp();
-        break;
-
-    case CMD_WP:
-        ok = do_cmd_wp();
-        break;
-
-    case CMD_R3:
-        ok = do_cmd_r3();
-        break;
-
-    case CMD_R4:
-        ok = do_cmd_r4();
-        break;
-
-    case CMD_R5:
-        ok = do_cmd_r5();
-        break;
-
-    case CMD_RA:
-        ok = do_cmd_ra();
-        break;
-
-    case CMD_RB:
-        ok = do_cmd_rb();
-        break;
-
-    case CMD_RC:
-        ok = do_cmd_rc();
-        break;
-
-    case CMD_RS:
-        ok = do_cmd_rs();
-        break;
-
-    case CMD_RX:
-        ok = do_cmd_rx();
-        break;
-
-    case CMD_RI:
-        ok = do_cmd_ri();
-        break;
-
-    case CMD_WE:
-        ok = do_cmd_we();
-        break;
-
-    case CMD_WT:
-        ok = do_cmd_wt();
-        break;
-
-    case CMD_WI:
-        ok = do_cmd_wi();
-        break;
-
-    case CMD_WY:
-        ok = do_cmd_wy();
-        break;
-
-    case CMD_WZ:
-        ok = do_cmd_wz();
-        break;
-
-    case CMD_RERROR:
-        ok = do_cmd_error();
-        break;
+        n_params = 0;
     }
-    return ok;
+
+    // 2. Decodificar y ejecutar con un switch eficiente
+    if (strlen(cmd_name) < 2)
+        return do_cmd_error("E|CMD_SHORT");
+
+    char prefijo = cmd_name[0];
+    char accion = cmd_name[1];
+
+    if (prefijo == 'R')
+    {
+        switch (accion)
+        {
+        case '1':
+            return do_cmd_r1();
+        case '2':
+            return do_cmd_r2();
+        case '3':
+            return do_cmd_r3();
+        case '4':
+            return do_cmd_r4();
+        case 'A':
+            return do_cmd_ra();
+        case 'B':
+            return do_cmd_rb();
+        case 'C':
+            return do_cmd_rc();
+        case 'P':
+            return do_cmd_rp(n_params, comando.params);
+        case 'S':
+            return do_cmd_rs();
+        case 'X':
+            return do_cmd_rx();
+        case 'I':
+            return do_cmd_ri();
+        default:
+            return do_cmd_error("E|CMD_UNKNOWN");
+        }
+    }
+    else if (prefijo == 'W')
+    {
+        switch (accion)
+        {
+        case 'P':
+            return do_cmd_wp(n_params, comando.params);
+        case 'E':
+            return do_cmd_we();
+        case 'I':
+            return do_cmd_wi(n_params, comando.params);
+        case 'Y':
+            return do_cmd_wy();
+        case 'Z':
+            return do_cmd_wz();
+        case 'T':
+            return do_cmd_wt(); // No utilizado, pero mantenido
+        default:
+            return do_cmd_error("E|CMD_UNKNOWN");
+        }
+    }
+
+    return do_cmd_error("E|CMD_UNKNOWN");
 }
 
 int do_cmd_ri()
@@ -377,6 +243,7 @@ int do_cmd_r1()
     {
         datoF = LecturaFuerzaNoFiltrada();
     }
+
     if (abs(datoF) > 10000)
     {
         Serial.print(datoF, 1);
@@ -391,18 +258,18 @@ int do_cmd_r1()
     return 1;
 }
 
-//Lectura encoder
+// Lectura encoder
 int do_cmd_r2()
 {
     float value;
     value = LecturaExtension();
     Serial.print(value, 3);
     Serial.write(0xd);
-    //Serial.println(vg.PosEncoder);
+    // Serial.println(vg.PosEncoder);
     return 1;
 }
 
-//Lectura analogico CH 1, valor  en PASOS
+// Lectura analogico CH 1, valor  en PASOS
 int do_cmd_r3()
 {
     long value;
@@ -439,7 +306,7 @@ int do_cmd_r4()
 
     // Datos de cabecera
     uint8_t fs1 = 0xAA;
-    uint8_t fs2 = 0x55; //0xBB;
+    uint8_t fs2 = 0x55; // 0xBB;
 
     uint8_t nrBytes = 8; // 4 bytes * 2 variables
 
@@ -498,7 +365,7 @@ int do_cmd_r5()
 
 //----- Lectura de picos máximos realtime
 // Estos comandos resetean el valor una vez leido
-//Lectura pico máximo de fuerza, autoreseteable
+// Lectura pico máximo de fuerza, autoreseteable
 int do_cmd_ra()
 {
     float datoF;
@@ -511,7 +378,7 @@ int do_cmd_ra()
     return 1;
 }
 
-//Lectura pico máximo de fuerza en un tramo, autoreseteable
+// Lectura pico máximo de fuerza en un tramo, autoreseteable
 int do_cmd_rb()
 {
     float datoF;
@@ -524,7 +391,7 @@ int do_cmd_rb()
     return 1;
 }
 
-//Lectura pico máximo de fuerza en un tramo filtrado, autoreseteable
+// Lectura pico máximo de fuerza en un tramo filtrado, autoreseteable
 int do_cmd_rc()
 {
     float datoF;
@@ -537,7 +404,7 @@ int do_cmd_rc()
     return 1;
 }
 
-//Alarmas
+// Alarmas
 int do_cmd_rs()
 {
     int value = get_alarmas();
@@ -546,7 +413,7 @@ int do_cmd_rs()
     Serial.write(0xd);
     return 1;
 }
-//Identificar extensometro
+// Identificar extensometro
 int do_cmd_rx()
 {
     int value;
@@ -564,7 +431,7 @@ int do_cmd_we()
     return 1;
 }
 
-//Lanzar el ensayo
+// Lanzar el ensayo
 int do_cmd_wt()
 {
 
@@ -577,16 +444,27 @@ int do_cmd_wt()
  * Valor: 0 / 1
  ******************************************************/
 
-int do_cmd_wi()
+int do_cmd_wi(int n_params, char params[][LONG_MAX_PARAMETRO])
 {
-    int pin = atoi(comando.params[1]);
-    int estado = atoi(comando.params[2]);
+    if (n_params < 2)
+    {
+        return do_cmd_error("E|PARAM_COUNT");
+    }
+    int pin = atoi(params[0]);
+    int estado = atoi(params[1]);
+
+    // Validar que el pin sea uno de los permitidos para escritura
+    if (pin != PIN_ALARMA_FUERZA_POST && pin != PIN_ALARMA_FUERZA_NEG && pin != PIN_TEST_DEBUG)
+    {
+        return do_cmd_error("E|PIN_INVALID");
+    }
+
     digitalWrite(pin, estado);
-   
+
     return 1;
 }
 
-//Reset hardware del conversor
+// Reset hardware del conversor
 int do_cmd_wy()
 {
     AD730_CONFIGURADO = false;
@@ -599,54 +477,39 @@ int do_cmd_wy()
     return 1;
 }
 
-//Cero conversor
+// Cero conversor
 int do_cmd_wz()
 {
     fuerza_cero();
     return 1;
 }
 
-int freeRam()
+int do_cmd_rp(int n_params, char params[][LONG_MAX_PARAMETRO])
 {
-    extern int __heap_start, *__brkval;
-    int v;
-    return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
-}
+    if (n_params < 1)
+    {
+        return do_cmd_error("E|PARAM_COUNT");
+    }
 
-int do_cmd_error()
-{
-
-    Serial.print('?');
-    Serial.write(0xd);
-
-    return 1;
-}
-
-// ------------------------------ Registro de parametros -----
-int do_cmd_rp()
-{
     int indice = 0;
-    int funcion = atoi(comando.params[2]);
+    int funcion = atoi(params[0]);
 
     switch (funcion)
     {
-
     case 0:
-        
         break;
 
-    case 9: //RP|9  // filtro_on_off
+    case 9: // RP|9  // filtro_on_off
         Serial.print(vgEEprom.filtro_on_off);
         Serial.write(0xd);
         break;
 
-    case 10: //RP|10  // IdEstacion
+    case 10: // RP|10  // IdEstacion
         Serial.print(vgEEprom.idEstacion);
         Serial.write(0xd);
         break;
 
-    case 13: //RP|13 lectura parametros célula en RAM
-       
+    case 13: // RP|13 lectura parametros célula en RAM
         Serial.print(vg.id_celula);
         Serial.print('|');
         Serial.print(vg.cap_celula, 3);
@@ -665,36 +528,38 @@ int do_cmd_rp()
         Serial.print('|');
         Serial.print(vg.datarate_celula);
         Serial.write(0xd);
-
         break;
 
-    case 14: //RP|14
+    case 14: // RP|14
         Serial.print(vgEEprom.PasoHusillo);
         Serial.write(0xd);
         break;
-    case 15: //RP|15
+
+    case 15: // RP|15
         Serial.print(vgEEprom.PasosEncoder);
         Serial.write(0xd);
         break;
-    case 16: //RP|16  //polaridad extension
+
+    case 16: // RP|16 // polaridad extension
         Serial.print(vgEEprom.IPE);
         Serial.write(0xd);
         break;
-    case 17: //RP|17  //modo quadrature
+
+    case 17: // RP|17 // modo quadrature
         Serial.print(vgEEprom.count_mode);
         Serial.write(0xd);
         break;
 
-    case 18: //RP|18
-
+    case 18: // RP|18
         break;
 
-    case 19: //RP|19|xx lectura parametros célula xxx en EEPROM
-        indice = atoi(comando.params[3]);
+    case 19: // RP|19|xx lectura parametros célula xxx en EEPROM
+        if (n_params < 2)
+            return do_cmd_error("E|PARAM_COUNT");
 
-        indice = atoi(comando.params[3]);
+        indice = atoi(params[1]);
         if (indice < 0 || indice > ID_MAXIMO_CELULA - 1)
-            return 0;
+            return do_cmd_error("E|CELL_ID_OOR");
 
         Serial.print(vgEEprom.celulas[indice].idcel);
         Serial.print('|');
@@ -705,9 +570,9 @@ int do_cmd_rp()
         Serial.print(vgEEprom.celulas[indice].res, 3);
         Serial.print('|');
         Serial.print(vgEEprom.celulas[indice].limite_carga_celP, 3);
-        Serial.print('|'); // en unidades de fuerza N
+        Serial.print('|');
         Serial.print(vgEEprom.celulas[indice].limite_carga_celN, 3);
-        Serial.print('|'); // en unidades de fuerza N
+        Serial.print('|');
         Serial.print(vgEEprom.celulas[indice].gainpasostoFPos, 5);
         Serial.print('|');
         Serial.print(vgEEprom.celulas[indice].gainpasostoFNeg, 5);
@@ -716,132 +581,171 @@ int do_cmd_rp()
         Serial.write(0xd);
         break;
 
-    case 21: //RP|21  //salida de datos continua start stop
+    case 21: // RP|21 // salida de datos continua start stop
         Serial.print(vg.salida_datos_continua_start);
         Serial.write(0xd);
         break;
 
-    case 22: //RP|22  //salida de datos binario
+    case 22: // RP|22 // salida de datos binario
         Serial.print(vg.modo_salida_datos_binario);
         Serial.write(0xd);
         break;
 
-    case 90: //RP|90  //ID maquina
+    case 90: // RP|90 // ID maquina
         Serial.print(vgEEprom.id_maquina);
         Serial.write(0xd);
         break;
 
-    case 99: //RP|99 Test memoria RAM
+    case 99: // RP|99 Test memoria RAM
         Serial.print(F("Memoria RAM:"));
         Serial.print(freeRam());
         Serial.write(0xd);
-
         break;
 
     default:
-        break;
+        return do_cmd_error("E|PARAM_UNKNOWN");
     }
+
     return 1;
 }
 
-int do_cmd_wp()
+int do_cmd_wp(int n_params, char params[][LONG_MAX_PARAMETRO])
 {
+    if (n_params < 1)
+    {
+        return do_cmd_error("E|PARAM_COUNT");
+    }
     int indice = 0;
-    int funcion = atoi(comando.params[2]);
+    int funcion = atoi(params[0]);
 
     switch (funcion)
     {
 
     case 0:
+        if (n_params != 1)
+            return do_cmd_error("E|PARAM_COUNT");
         salvar_valores();
         break;
 
-    case 9: //WP|9|xx
-        vgEEprom.filtro_on_off = atoi(comando.params[3]);
+    case 9: // WP|9|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vgEEprom.filtro_on_off = atoi(params[1]);
         break;
 
-    case 10: //WP|10|xx
-        vgEEprom.idEstacion = atoi(comando.params[3]);
+    case 10: // WP|10|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vgEEprom.idEstacion = atoi(params[1]);
         break;
 
-    case 14: //WP|14|xx
-        vgEEprom.PasoHusillo = atof(comando.params[3]);
+    case 14: // WP|14|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vgEEprom.PasoHusillo = atof(params[1]);
         RecalcularCoeficientes();
         break;
-    case 15: //WP|15|xx
-        vgEEprom.PasosEncoder = atof(comando.params[3]);
+    case 15: // WP|15|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vgEEprom.PasosEncoder = atof(params[1]);
         RecalcularCoeficientes();
         break;
-    case 16: //WP|16|xx
-        vgEEprom.IPE = atoi(comando.params[3]);
+    case 16: // WP|16|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vgEEprom.IPE = atoi(params[1]);
         RecalcularCoeficientes();
         break;
 
-    case 17: //WP|17|xx
-        vgEEprom.count_mode = atoi(comando.params[3]);
+    case 17: // WP|17|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vgEEprom.count_mode = atoi(params[1]);
         inicializar_encoders();
         RecalcularCoeficientes();
         break;
 
-    case 18: //WP|18|xx
+    case 18: // WP|18|xx
 
         break;
 
     case 19:
         // WP|19|idcel|cap|pol|res|limite_carga_celP|limite_carga_celN|gainpasostoFPos|gainpasostoFNeg|datarate
+        if (n_params != 10)
+            return do_cmd_error("E|PARAM_COUNT_19");
 
-        indice = atoi(comando.params[3]);
-        if (indice < 0 || indice > ID_MAXIMO_CELULA - 1 || comando.nrparametros > 12)
-            return 0;
+        indice = atoi(params[1]);
+        if (indice < 0 || indice >= ID_MAXIMO_CELULA)
+            return do_cmd_error("E|CELL_ID_OOR");
 
-        vgEEprom.celulas[indice].idcel = atoi(comando.params[3]);
-        vgEEprom.celulas[indice].cap = atof(comando.params[4]);
-        vgEEprom.celulas[indice].pol = atoi(comando.params[5]);
-        vgEEprom.celulas[indice].res = atof(comando.params[6]);
-        vgEEprom.celulas[indice].limite_carga_celP = abs(atof(comando.params[7]));
-        vgEEprom.celulas[indice].limite_carga_celN = abs(atof(comando.params[8]));
-        vgEEprom.celulas[indice].gainpasostoFPos = atof(comando.params[9]);
-        vgEEprom.celulas[indice].gainpasostoFNeg = atof(comando.params[10]);
-        vgEEprom.celulas[indice].datarate = (TDataRate)atoi(comando.params[11]);
+        vgEEprom.celulas[indice].idcel = atoi(params[1]);
+        vgEEprom.celulas[indice].cap = atof(params[2]);
+        vgEEprom.celulas[indice].pol = atoi(params[3]);
+        vgEEprom.celulas[indice].res = atof(params[4]);
+        vgEEprom.celulas[indice].limite_carga_celP = abs(atof(params[5]));
+        vgEEprom.celulas[indice].limite_carga_celN = abs(atof(params[6]));
+        vgEEprom.celulas[indice].gainpasostoFPos = atof(params[7]);
+        vgEEprom.celulas[indice].gainpasostoFNeg = atof(params[8]);
+        vgEEprom.celulas[indice].datarate = (TDataRate)atoi(params[9]);
 
-        //Serial.print("Indx: ");
-        //Serial.println(indice);
         ValidarLimites(indice);
         configurar_celula(indice);
 
         break;
 
-    case 20: //WP|20|xx activar celula por software
-
-        indice = atoi(comando.params[3]);
-        if (indice < 0 || indice > ID_MAXIMO_CELULA - 1)
-            return 0;
+    case 20: // WP|20|xx activar celula por software
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        indice = atoi(params[1]);
+        if (indice < 0 || indice >= ID_MAXIMO_CELULA)
+            return do_cmd_error("E|CELL_ID_OOR");
 
         configurar_celula(indice);
         break;
 
-    case 21: //WP|21|xx
-        vg.salida_datos_continua_start = atoi(comando.params[3]);
+    case 21: // WP|21|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vg.salida_datos_continua_start = atoi(params[1]);
         break;
 
-    case 22: //WP|22|xx
-        vg.modo_salida_datos_binario = atoi(comando.params[3]);
+    case 22: // WP|22|xx
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        vg.modo_salida_datos_binario = atoi(params[1]);
         break;
 
-    case 90: //WP|99|xx texto de 10 caracteres
-        strncpy(vgEEprom.id_maquina, comando.params[3], strlen(comando.params[3]));
+    case 90: // WP|90|xx texto de 14 caracteres
+        if (n_params != 2)
+            return do_cmd_error("E|PARAM_COUNT");
+        strncpy(vgEEprom.id_maquina, params[1], 14);
+        vgEEprom.id_maquina[14] = '\0'; // Asegurar terminación
         break;
 
-    case 999: 
+    case 999:
+        if (n_params != 1)
+            return do_cmd_error("E|PARAM_COUNT");
         SetValorPordefecto();
         salvar_valores();
-        //Serial.println(F("FACTORY_RESET_OK"));
-        break;    
+        break;
 
     default:
-        break;
+        return do_cmd_error("E|PARAM_UNKNOWN");
     }
 
     return 1;
 }
 
+int do_cmd_error(const char *error_msg)
+{
+    Serial.println(error_msg);
+    return 0; // Devolvemos 0 para indicar fallo
+}
+
+int freeRam()
+{
+    extern int __heap_start, *__brkval;
+    int v;
+    return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
+}

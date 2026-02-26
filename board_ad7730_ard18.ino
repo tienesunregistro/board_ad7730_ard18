@@ -26,21 +26,30 @@ Revisiones:
 #define CLAVE_VERSION 303
 
 #define ID_ESTACION 1
-#define ID_MAXIMO_CELULA 5 // CELULAS DE LA 0..4
+#define ID_MAXIMO_CELULA 5   // CELULAS DE LA 0..4
+#define BAUDRATE_RS232 38400 // 115200
+#define ADC_USE_INTERRUPT 1
 
 #define LF 0x0a // 10
-#define CR 0x0d //13
+#define CR 0x0d // 13
 
 // Caracteres de inicio y fin del comando
 #define CHAR_INICIO_CMD ':'
 #define CHAR_FIN_CMD CR
 
 #define TIMEOUT_CHECK_ALARMAS 200 // ms
+
+// Prototipos de funciones de otros ficheros .ino
+int procesarComando(char *cmdStr);
+int do_cmd_r4();
+void check_alarmas();
+void check_rs232_polling();
+
 //-----------------------------------
 // Definición de pines
-//const int PIN_SCLK = 13;
-//const int PIN_MISO = 12;
-//const int PIN_MOSI = 11;
+// const int PIN_SCLK = 13;
+// const int PIN_MISO = 12;
+// const int PIN_MOSI = 11;
 
 // -- Definicion de pines
 
@@ -48,18 +57,18 @@ Revisiones:
 const int PIN_RX_RS232 = 0;
 const int PIN_TX_RS232 = 1;
 
-//pines del AD7730
+// pines del AD7730
 const int PIN_CS_AD7730 = 10;
-const int PIN_RDY_AD730 = 2; //Int 0
+const int PIN_RDY_AD730 = 2; // Int 0
 const int PIN_RESET_AD730 = 8;
 
-//pines del LS7366_CS
+// pines del LS7366_CS
 const int PIN_CS_LS7366 = 9;
 
 // Pin test debug
 const int PIN_TEST_DEBUG = 3;
 
-//pines ALARMAS fuerza positiva y fuerza negativa
+// pines ALARMAS fuerza positiva y fuerza negativa
 const int PIN_ALARMA_FUERZA_POST = 4;
 const int PIN_ALARMA_FUERZA_NEG = 5;
 
@@ -105,13 +114,13 @@ typedef struct
     float cap; // Capacidad
     int pol;   // Invertir polaridad
     float res; // resolucion
-    //maxima carga soportada por la célula
+    // maxima carga soportada por la célula
     float limite_carga_celP; // positivo
     float limite_carga_celN; // negativo
     // Ganancia
     float gainpasostoFPos; // Relacion pasos-a-unidades-de-fuerza-positivo * 1000
     float gainpasostoFNeg; // Relacion pasos-a-unidades-de-fuerza-negativo * 1000
-    TDataRate datarate;    //Hz data rate al que se ajusta la celula
+    TDataRate datarate;    // Hz data rate al que se ajusta la celula
 } TCelula;
 
 typedef struct
@@ -127,7 +136,7 @@ typedef struct
     float cap_celula;
     float res_celula;
     int pol_celula;
-    float gan_celulaPos; //pasos por unidad de fuerza
+    float gan_celulaPos; // pasos por unidad de fuerza
     float gan_celulaNeg;
     float limite_carga_celPos;
     float limite_carga_celNeg;
@@ -135,12 +144,12 @@ typedef struct
     long pasos_limite_carga_celNeg;
     int datarate_celula;
 
-    //Encoder
+    // Encoder
     long PosEncoder; // posición del encoder en pasos
     float CCE_MM;
     float CCE_IN;
 
-    //Datos conversor
+    // Datos conversor
     long dac_CH1;
     long dac_CH2;
     long dac_filtrado_CH1;
@@ -163,7 +172,7 @@ typedef struct
     int idEstacion;
 
     int IPE;         // polaridad de la extension
-    byte count_mode; //quadrature count mode x1, x2, x4
+    byte count_mode; // quadrature count mode x1, x2, x4
     float PasoHusillo;
     float PasosEncoder;
     TCelula celulas[ID_MAXIMO_CELULA];
@@ -173,14 +182,12 @@ typedef struct
     float gainneg;
 
     char id_maquina[15];
-     uint16_t checksum;
+    uint16_t checksum;
 } TVarEEprom;
 
 typedef struct
 {
-    int nrparametros;
-    char receivedChars[LONG_COMANDO + 1]; // uno mas para el nulo
-    char params[NR_MAX_PARAMETROS][LONG_MAX_PARAMETRO] = {0};
+    char params[NR_MAX_PARAMETROS][LONG_MAX_PARAMETRO];
 
 } TComando;
 
@@ -190,7 +197,7 @@ TComando comando;
 
 //-- Buffer datos DAC18
 
-#define DATOS_BUFFER_SIZE 32      // Debe ser potencia de 2 (2, 4, 8, 16, 32, 64...)
+#define DATOS_BUFFER_SIZE 32                // Debe ser potencia de 2 (2, 4, 8, 16, 32, 64...)
 #define BUFFER_MASK (DATOS_BUFFER_SIZE - 1) // Resultado: 31 (0x1F)
 
 typedef struct _tpDatoCanal
@@ -206,6 +213,8 @@ typedef struct
     volatile unsigned int head;
     volatile unsigned int tail;
 } data_buffer;
+
+void store_char(TDatoCanal *pdato, data_buffer *buffer);
 
 data_buffer *pdatos_buffer;
 data_buffer datos_buffer = {{0UL, 0UL, 0L}, 0U, 0U};
@@ -226,8 +235,8 @@ void setup()
 {
     noInterrupts();
     pinMode(PIN_RX_RS232, INPUT);
-    //digitalWrite(PIN_RX_RS232, HIGH); // pull up para evitar ruidos en la entrada
-   
+    // digitalWrite(PIN_RX_RS232, HIGH); // pull up para evitar ruidos en la entrada
+
     /*
     baudRate = detRate(PIN_RX_RS232); // La función devuelve alguna de las velocidades estandar que detecta
                                       // 1200,2400,4800,9600,14400,19200,28800,38400,57600,115200
@@ -248,31 +257,30 @@ void setup()
     }
 
     */
-    
-    Serial.begin(38400);
-    //Serial.begin(115200);
+
+    Serial.begin(BAUDRATE_RS232);
     SerialAux.begin(38400);
 
     SPI.begin();
 
-    //PINES ADS7730
+    // PINES ADS7730
     pinMode(PIN_RESET_AD730, OUTPUT);
     pinMode(PIN_CS_AD7730, OUTPUT);
-    pinMode(PIN_RDY_AD730, INPUT_PULLUP); //INPUT_PULLUP
+    pinMode(PIN_RDY_AD730, INPUT_PULLUP); // INPUT_PULLUP
     digitalWrite(PIN_CS_AD7730, HIGH);
     CS_AD7730_HIGH();
 
-    //LS7366_CS
+    // LS7366_CS
     pinMode(PIN_CS_LS7366, OUTPUT);
     CS_LS7366_HIGH();
 
-    //ALARMAS
+    // ALARMAS
     pinMode(PIN_ALARMA_FUERZA_POST, OUTPUT);
     pinMode(PIN_ALARMA_FUERZA_NEG, OUTPUT);
     ALARMA_FUERZA_POST_OFF();
     ALARMA_FUERZA_NEG_OFF();
 
-    //Pin PIN_TEST_DEBUG
+    // Pin PIN_TEST_DEBUG
     pinMode(PIN_TEST_DEBUG, OUTPUT);
 
     Buffer_init(&datos_buffer);
@@ -283,10 +291,12 @@ void setup()
     inicializar_encoders();
     inicializar_adlc();
     delay(500);
-    Buffer_Flush(); 
+    Buffer_Flush();
     fuerza_cero();
 
+#if ADC_USE_INTERRUPT
     attachInterrupt(digitalPinToInterrupt(PIN_RDY_AD730), ISR_RDY_ADC7730, FALLING);
+#endif
 
     AD730_CONFIGURADO = true;
 
@@ -294,85 +304,73 @@ void setup()
 
     vg.salida_datos_continua_start = 0;
     vg.modo_salida_datos_binario = 0;
-    //vgEEprom.filtro_on_off = 1;
+    // vgEEprom.filtro_on_off = 1;
 
     lastTimeAlarmas = millis();
 }
 
+// Bucle principal
 void loop()
 {
-    //digitalWrite(PIN_TEST_DEBUG, 1);
+    // Recepción RS232 por sondeo directo (más robusto en este escenario)
+    check_rs232_polling();
 
-    int rta = 0;
-    unsigned long currentMillis = millis();
-
+    // Consumir muestras del ADC desde el buffer circular
+    // (imprescindible para actualizar vg.dac_CH1 y vg.dac_filtrado_CH1)
     if (IsDataAvailable())
     {
         leer_adlc();
     }
-    //leer_encoder();
 
+    // Comprobar y actualizar estado de alarmas
+    static unsigned long last_check = 0;
+    if (millis() - last_check > TIMEOUT_CHECK_ALARMAS)
+    {
+        check_alarmas();
+        last_check = millis();
+    }
+
+    // Gestionar transmisión continua si está activa
     if (vg.salida_datos_continua_start)
     {
         do_cmd_r4();
     }
-
-    recvComandoConMarcadoresInicioFinal();
-    comando.nrparametros = 0;
-    if (newComando == true)
-    {
-        comando.nrparametros = get_params((char *)comando.receivedChars, comando.params, NR_MAX_PARAMETROS);
-
-        if (atoi(comando.params[0]) == vgEEprom.idEstacion)
-        {
-            rta = procesarComando(comando.params[1]);
-        }
-        newComando = false;
-    }
-
-    if ((currentMillis - lastTimeAlarmas) >= TIMEOUT_CHECK_ALARMAS)
-    {
-        check_alarmas();
-        lastTimeAlarmas = millis();
-    }
-
-    //digitalWrite(PIN_TEST_DEBUG, 0);
 }
 
-void recvComandoConMarcadoresInicioFinal()
+void check_rs232_polling()
 {
-    static boolean recvEnProgreso = false;
-    static byte ndx = 0;
-    char marcadorInicio = CHAR_INICIO_CMD;
-    char marcadorFinal = CHAR_FIN_CMD;
-    char rc;
-
-    while (Serial.available() > 0 && newComando == false)
+    if (Serial.available() <= 0)
     {
-        rc = Serial.read();
-
-        if (recvEnProgreso == true)
-        {
-            if (rc != marcadorFinal)
-            {
-                comando.receivedChars[ndx] = rc;
-                ndx++;
-                if (ndx >= LONG_COMANDO)
-                {
-                    ndx = LONG_COMANDO - 1;
-                }
-            }
-            else
-            {
-                comando.receivedChars[ndx] = '\0'; // terminate the string
-                recvEnProgreso = false;
-                ndx = 0;
-                newComando = true;
-            }
-        }
-        else if (rc == marcadorInicio)
-        {
-            recvEnProgreso = true;
-        }
+        return;
     }
+
+    static char comando_local[LONG_COMANDO + 1];
+    int n = Serial.readBytesUntil(CHAR_FIN_CMD, comando_local, LONG_COMANDO);
+    if (n <= 0)
+    {
+        return;
+    }
+
+    comando_local[n] = '\0';
+
+    // Si viene LF residual al final, recortarlo
+    while (n > 0 && (comando_local[n - 1] == '\n' || comando_local[n - 1] == '\r'))
+    {
+        comando_local[n - 1] = '\0';
+        n--;
+    }
+
+    // Saltar posibles separadores al inicio
+    int i = 0;
+    while (comando_local[i] == '\r' || comando_local[i] == '\n' || comando_local[i] == ' ')
+    {
+        i++;
+    }
+
+    if (comando_local[i] == '\0')
+    {
+        return;
+    }
+
+    procesarComando(&comando_local[i]);
 }
